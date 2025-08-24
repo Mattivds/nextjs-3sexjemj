@@ -218,7 +218,7 @@ export default function Page() {
     'w-full border border-gray-300 rounded px-3 py-2 bg-white text-gray-900 placeholder-gray-400';
 
   const courtClass =
-    'relative bg-green-600 rounded-xl p-5 h-80 md:h-96 pb-14 flex flex-col justify-between border-4 border-green-700';
+    'relative bg-green-600 rounded-lg p-3 h-60 md:h-72 pb-10 flex flex-col justify-between border-4 border-green-700';
 
   // Firestore synchronisatie
   const isFirestoreUpdate = useRef(false);
@@ -416,6 +416,46 @@ export default function Page() {
     };
     setReservations((prev) => [...prev, fresh]);
     return fresh;
+  };
+
+  const setPlayerOnCourt = (
+    date: string,
+    timeSlot: string,
+    court: number,
+    idx: number,
+    player: string
+  ) => {
+    const res = ensureReservation(date, timeSlot, court);
+    const newPlayers = [...res.players];
+    newPlayers[idx] = player;
+    const wasFull = isReservationFull(res);
+    const willBeFull = isReservationFull({ ...res, players: newPlayers });
+
+    setReservations((prev) => {
+      const next = prev.map((r) =>
+        r === res
+          ? {
+              ...r,
+              players: newPlayers,
+              notifiedFull: r.notifiedFull || willBeFull,
+              ...(willBeFull ? {} : { result: undefined }),
+            }
+          : r
+      );
+      return next.filter(
+        (r) =>
+          !(
+            r.date === date &&
+            r.timeSlot === timeSlot &&
+            r.court === court &&
+            r.players.every((p) => !p)
+          )
+      );
+    });
+
+    if (!wasFull && willBeFull) {
+      sendMatchFullMessages({ ...res, players: newPlayers, notifiedFull: true });
+    }
   };
 
   /* =========================
@@ -1068,147 +1108,67 @@ export default function Page() {
     const reservation = findReservation(date, timeSlot, court);
     const matchType = getMatchType(date, timeSlot, court);
     const category = getCategory(date, timeSlot, court);
+    const available = playersAvailableFor(date, timeSlot);
+    const playersInSlot = getPlayersInSlot(date, timeSlot);
 
-    // Kaart met bestaande reservatie
-    if (reservation) {
-      const mayEdit = canModifyReservation(reservation);
-      const winnerSingle = reservation.result?.winner;
-      const winnerDoubles = reservation.result?.winners;
-      const isWin = (p: string) =>
-        Array.isArray(winnerDoubles) && winnerDoubles.includes(p);
-      const iAmIn = !!myName && reservation.players.includes(myName);
-      const availableSet = new Set(playersAvailableFor(date, timeSlot));
-      const canJoin =
-        !!myName &&
-        !iAmIn &&
-        availableSet.has(myName) &&
-        !getPlayersInSlot(date, timeSlot).has(myName) &&
-        reservation.players.some((p) => !p); // er is nog plek
+    const optionsFor = (idx: number) => {
+      const cur = reservation?.players[idx];
+      const taken = new Set(playersInSlot);
+      if (cur) taken.delete(cur);
+      return available.filter((p) => !taken.has(p));
+    };
 
-      return (
-        <div className={courtClass}>
-          <ReservationBadge r={reservation} />
-
-          {reservation.matchType === 'single' ? (
-            <>
-              <div className="bg-blue-600 text-white text-center py-3 rounded border-2 border-white text-base font-semibold">
-                <div className="flex items-center justify-center">
-                  <PlayerChip
-                    name={reservation.players[0] || '—'}
-                    size="md"
-                    highlight={
-                      !!reservation.players[0] &&
-                      winnerSingle === reservation.players[0]
-                    }
-                  />
-                </div>
-              </div>
-              <TennisNet />
-              <div className="bg-blue-600 text-white text-center py-3 rounded border-2 border-white text-base font-semibold">
-                <div className="flex items-center justify-center">
-                  <PlayerChip
-                    name={reservation.players[1] || '—'}
-                    size="md"
-                    highlight={
-                      !!reservation.players[1] &&
-                      winnerSingle === reservation.players[1]
-                    }
-                  />
-                </div>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="space-y-1">
-                <div className="bg-blue-600 text-white text-center py-2 rounded border-2 border-white text-sm font-semibold">
-                  <div className="flex items-center justify-center">
-                    <PlayerChip
-                      name={reservation.players[0] || '—'}
-                      size="sm"
-                      highlight={isWin(reservation.players[0])}
-                    />
-                  </div>
-                </div>
-                <div className="bg-blue-600 text-white text-center py-2 rounded border-2 border-white text-sm font-semibold">
-                  <div className="flex items-center justify-center">
-                    <PlayerChip
-                      name={reservation.players[1] || '—'}
-                      size="sm"
-                      highlight={isWin(reservation.players[1])}
-                    />
-                  </div>
-                </div>
-              </div>
-              <TennisNet />
-              <div className="space-y-1">
-                <div className="bg-blue-600 text-white text-center py-2 rounded border-2 border-white text-sm font-semibold">
-                  <div className="flex items-center justify-center">
-                    <PlayerChip
-                      name={reservation.players[2] || '—'}
-                      size="sm"
-                      highlight={isWin(reservation.players[2])}
-                    />
-                  </div>
-                </div>
-                <div className="bg-blue-600 text-white text-center py-2 rounded border-2 border-white text-sm font-semibold">
-                  <div className="flex items-center justify-center">
-                    <PlayerChip
-                      name={reservation.players[3] || '—'}
-                      size="sm"
-                      highlight={isWin(reservation.players[3])}
-                    />
-                  </div>
-                </div>
-              </div>
-            </>
-          )}
-
-          {/* Actieknoppen */}
-          <div className="absolute top-1 right-1 flex gap-1">
-            {iAmIn && (
-              <button
-                onClick={() => leaveCourt(reservation, myName!)}
-                className="bg-white text-gray-800 rounded-full px-2 py-1 text-[10px] border border-gray-200"
-                title="Ik kan toch niet"
-              >
-                Ik kan toch niet
-              </button>
+    const renderSide = (indices: number[], size: 'sm' | 'md') => (
+      <div className="space-y-1">
+        {indices.map((idx) => (
+          <div key={idx} className="text-center">
+            {reservation?.players[idx] && (
+              <PlayerChip name={reservation.players[idx]} size={size} />
             )}
-            {canJoin && (
-              <button
-                onClick={() => joinCourt(date, timeSlot, court)}
-                className="bg-white text-gray-800 rounded-full px-2 py-1 text-[10px] border border-gray-200"
-                title="Ik speel mee"
-              >
-                Ik speel mee
-              </button>
-            )}
-            {mayEdit && (
-              <button
-                onClick={() => removeReservation(date, timeSlot, court)}
-                className="bg-red-500 text-white rounded-full w-6 h-6 text-xs hover:bg-red-600"
-                title="Verwijder reservatie"
-              >
-                ×
-              </button>
-            )}
+            <select
+              className="mt-1 w-full bg-white text-gray-900 border border-gray-300 rounded text-xs"
+              value={reservation?.players[idx] || ''}
+              onChange={(e) =>
+                setPlayerOnCourt(
+                  date,
+                  timeSlot,
+                  court,
+                  idx,
+                  e.target.value
+                )
+              }
+            >
+              <option value="">— selecteer —</option>
+              {optionsFor(idx).map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
           </div>
+        ))}
+      </div>
+    );
 
-          <WinnerButtons r={reservation} />
-        </div>
-      );
-    }
-
-    // Kaart zonder reservatie: controls bovenaan
-    const availableSet = new Set(playersAvailableFor(date, timeSlot));
-    const canFirstJoin =
-      !!myName &&
-      availableSet.has(myName) &&
-      !getPlayersInSlot(date, timeSlot).has(myName);
+    const topIdx = matchType === 'single' ? [0] : [0, 1];
+    const bottomIdx = matchType === 'single' ? [1] : [2, 3];
+    const size = matchType === 'single' ? 'md' : 'sm';
 
     return (
       <div className={courtClass}>
-        <div className="flex justify-center gap-2 mb-2">
+        {reservation && <ReservationBadge r={reservation} />}
+        {reservation && canModifyReservation(reservation) && (
+          <div className="absolute top-1 right-1">
+            <button
+              onClick={() => removeReservation(date, timeSlot, court)}
+              className="bg-red-500 text-white rounded-full w-6 h-6 text-xs hover:bg-red-600"
+              title="Verwijder reservatie"
+            >
+              ×
+            </button>
+          </div>
+        )}
+        <div className="flex justify-center gap-2 mb-1">
           <button
             onClick={() => setMatchTypeFor(date, timeSlot, court, 'single')}
             className={`px-3 py-1 rounded text-sm font-bold ${
@@ -1230,7 +1190,6 @@ export default function Page() {
             👥👥
           </button>
           <select
-            // *** Zichtbaar op mobiel: altijd donkere tekst op witte achtergrond
             className="px-2 py-1 rounded text-sm bg-white text-gray-900 border border-gray-300"
             value={getCategory(date, timeSlot, court)}
             onChange={(e) =>
@@ -1248,24 +1207,11 @@ export default function Page() {
           </select>
         </div>
 
-        <div className="flex-1 grid place-items-center text-white/90 text-sm">
-          Nog geen spelers
-        </div>
+        {renderSide(topIdx, size)}
+        <TennisNet />
+        {renderSide(bottomIdx, size)}
 
-        <div className="pt-2">
-          <button
-            onClick={() => joinCourt(date, timeSlot, court)}
-            disabled={!canFirstJoin}
-            className="w-full bg-white text-gray-800 py-2 px-3 rounded text-sm border border-gray-200 disabled:opacity-50"
-            title={
-              canFirstJoin
-                ? 'Plaats jezelf op dit terrein'
-                : 'Niet beschikbaar of al ingepland'
-            }
-          >
-            Ik speel mee
-          </button>
-        </div>
+        {reservation && <WinnerButtons r={reservation} />}
       </div>
     );
   };
