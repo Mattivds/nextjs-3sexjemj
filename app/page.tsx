@@ -427,8 +427,18 @@ export default function Page() {
     const newPlayers = [...res.players];
     newPlayers[idx] = player;
     const wasFull = isReservationFull(res);
-    const willBeFull = isReservationFull({ ...res, players: newPlayers });
+    const updated: Reservation = {
+      ...res,
+      players: newPlayers,
+    };
+    const willBeFull = isReservationFull(updated);
+    const toSave: Reservation = {
+      ...updated,
+      notifiedFull: res.notifiedFull || willBeFull,
+      ...(willBeFull ? {} : { result: undefined }),
+    };
 
+    isFirestoreUpdate.current = true;
     setReservations((prev) => {
       const withRes = prev.some(
         (r) => r.date === date && r.timeSlot === timeSlot && r.court === court
@@ -436,15 +446,10 @@ export default function Page() {
         ? prev
         : [...prev, res];
 
-      const next = withRes
+      return withRes
         .map((r) =>
           r.date === date && r.timeSlot === timeSlot && r.court === court
-            ? {
-                ...r,
-                players: newPlayers,
-                notifiedFull: r.notifiedFull || willBeFull,
-                ...(willBeFull ? {} : { result: undefined }),
-              }
+            ? toSave
             : r
         )
         .filter(
@@ -456,21 +461,17 @@ export default function Page() {
               r.players.every((p) => !p)
             )
         );
-
-      isFirestoreUpdate.current = true;
-      const updated = next.find(
-        (r) => r.date === date && r.timeSlot === timeSlot && r.court === court
-      );
-      if (updated) {
-        syncData.setReservation(updated);
-      } else {
-        syncData.deleteReservation(date, timeSlot, court);
-      }
-      return next;
     });
 
+    if (toSave.players.every((p) => !p)) {
+      syncData.deleteReservation(date, timeSlot, court);
+    } else {
+      const { notifiedFull, ...dbRes } = toSave;
+      syncData.setReservation(dbRes);
+    }
+
     if (!wasFull && willBeFull) {
-      sendMatchFullMessages({ ...res, players: newPlayers, notifiedFull: true });
+      sendMatchFullMessages({ ...toSave, notifiedFull: true });
     }
   };
 
