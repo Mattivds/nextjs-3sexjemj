@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { addWeeks, format } from 'date-fns';
 import { nl } from 'date-fns/locale';
+import { syncData, ensureAuth } from '@/lib/firebase';
 
 /* =========================
    Types
@@ -236,9 +237,30 @@ export default function Page() {
   const courtClass =
     'relative bg-green-600 rounded-xl p-5 h-80 md:h-96 pb-14 flex flex-col justify-between border-4 border-green-700';
 
+  // Firestore synchronisatie
+  const isFirestoreUpdate = useRef(false);
+  useEffect(() => {
+    let unsub: () => void = () => {};
+    ensureAuth().then(() => {
+      unsub = syncData.onReservationsChange((data) => {
+        isFirestoreUpdate.current = true;
+        setReservations(data);
+      });
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    if (isFirestoreUpdate.current) {
+      isFirestoreUpdate.current = false;
+      return;
+    }
+    syncData.setReservations(reservations);
+  }, [reservations]);
+
   /* =========================
      Persist & load
-  ========================= */
+    ========================= */
   useEffect(() => {
     try {
       const r = localStorage.getItem(RESERV_KEY);
