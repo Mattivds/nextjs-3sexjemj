@@ -12,6 +12,7 @@ import {
   doc,
   onSnapshot,
   setDoc,
+  deleteDoc,
   writeBatch,
   serverTimestamp,
   getDocs,
@@ -108,6 +109,21 @@ export const syncData = {
       });
       cb(list);
     });
+  },
+
+  async setReservation(reservation: Reservation) {
+    await ensureAuth();
+    const id = `${reservation.date}_${reservation.timeSlot}_${reservation.court}`;
+    await setDoc(
+      doc(db, 'reservations', id),
+      { ...reservation, updatedAt: serverTimestamp() },
+      { merge: true }
+    );
+  },
+
+  async deleteReservation(date: string, timeSlot: string, court: number) {
+    await ensureAuth();
+    await deleteDoc(doc(db, 'reservations', `${date}_${timeSlot}_${court}`));
   },
 
   async setReservations(reservations: Reservation[]) {

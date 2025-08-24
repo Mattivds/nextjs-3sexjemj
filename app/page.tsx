@@ -406,7 +406,7 @@ export default function Page() {
     const mt = getMatchType(date, timeSlot, court);
     const cat = getCategory(date, timeSlot, court);
     const size = mt === 'single' ? 2 : 4;
-    const fresh: Reservation = {
+    return {
       date,
       timeSlot,
       court,
@@ -414,8 +414,6 @@ export default function Page() {
       category: cat,
       players: Array.from({ length: size }, () => ''),
     };
-    setReservations((prev) => [...prev, fresh]);
-    return fresh;
   };
 
   const setPlayerOnCourt = (
@@ -432,9 +430,15 @@ export default function Page() {
     const willBeFull = isReservationFull({ ...res, players: newPlayers });
 
     setReservations((prev) => {
-      const next = prev
+      const withRes = prev.some(
+        (r) => r.date === date && r.timeSlot === timeSlot && r.court === court
+      )
+        ? prev
+        : [...prev, res];
+
+      const next = withRes
         .map((r) =>
-          r === res
+          r.date === date && r.timeSlot === timeSlot && r.court === court
             ? {
                 ...r,
                 players: newPlayers,
@@ -452,8 +456,16 @@ export default function Page() {
               r.players.every((p) => !p)
             )
         );
+
       isFirestoreUpdate.current = true;
-      syncData.setReservations(next);
+      const updated = next.find(
+        (r) => r.date === date && r.timeSlot === timeSlot && r.court === court
+      );
+      if (updated) {
+        syncData.setReservation(updated);
+      } else {
+        syncData.deleteReservation(date, timeSlot, court);
+      }
       return next;
     });
 
