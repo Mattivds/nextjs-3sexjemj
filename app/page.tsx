@@ -73,8 +73,10 @@ const PASSWORDS: Record<string, string> = {
 };
 
 const TIME_SLOTS = [
-  { id: '18u30-19u30', label: '18u30-19u30' },
-  { id: '19u30-20u30', label: '19u30-20u30' },
+  { id: '17u30-18u30', label: '17u30-18u30', courts: [2] },
+  { id: '18u30-19u30', label: '18u30-19u30', courts: [1, 2] },
+  { id: '19u30-20u30', label: '19u30-20u30', courts: [1, 2] },
+  { id: '20u30-21u30', label: '20u30-21u30', courts: [1, 2] },
 ];
 
 /* =========================
@@ -503,13 +505,14 @@ export default function Page() {
       TIME_SLOTS.map((slot) => ({
         dateStr: format(d, 'yyyy-MM-dd'),
         slotId: slot.id,
+        courts: slot.courts,
       }))
     );
 
     const oppSeen = (a: string, b: string) => opponentCount[pairKey(a, b)] || 0;
 
     hours.forEach((hr, hourIdx) => {
-      const groups = hourIdx % 2 === 0 ? [4, 4, 2] : [4, 2, 2];
+      const pattern = hourIdx % 2 === 0 ? [4, 4, 2] : [4, 2, 2];
       const used = new Set<string>();
       const available = new Set(playersAvailableFor(hr.dateStr, hr.slotId));
 
@@ -579,8 +582,9 @@ export default function Page() {
         return best;
       };
 
-      groups.forEach((size, idxInHour) => {
-        const court = idxInHour + 1;
+      hr.courts.forEach((court) => {
+        const size = pattern[court - 1];
+        if (!size) return;
         if (size === 2) {
           const pair = pickSingles();
           if (!pair) return;
@@ -638,6 +642,7 @@ export default function Page() {
     const hours = TIME_SLOTS.map((slot) => ({
       dateStr,
       slotId: slot.id,
+      courts: slot.courts,
     }));
     const result: Reservation[] = [];
     const mt: Record<string, MatchType> = {};
@@ -645,7 +650,7 @@ export default function Page() {
     const oppSeen = (a: string, b: string) => opponentCount[pairKey(a, b)] || 0;
 
     hours.forEach((hr, hourIdx) => {
-      const groups = hourIdx % 2 === 0 ? [4, 4, 2] : [4, 2, 2];
+      const pattern = hourIdx % 2 === 0 ? [4, 4, 2] : [4, 2, 2];
       const used = new Set<string>();
       const available = new Set(playersAvailableFor(hr.dateStr, hr.slotId));
 
@@ -715,8 +720,9 @@ export default function Page() {
         return best;
       };
 
-      groups.forEach((size, idxInHour) => {
-        const court = idxInHour + 1;
+      hr.courts.forEach((court) => {
+        const size = pattern[court - 1];
+        if (!size) return;
         if (size === 2) {
           const pair = pickSingles();
           if (!pair) return;
@@ -1907,8 +1913,12 @@ export default function Page() {
                         <h3 className="text-xl font-semibold text-gray-700 mb-4">
                           {slot.label}
                         </h3>
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                          {[1, 2, 3].map((court) => (
+                        <div
+                          className={`grid grid-cols-1 ${
+                            slot.courts.length > 1 ? 'md:grid-cols-2' : ''
+                          } gap-6`}
+                        >
+                          {slot.courts.map((court) => (
                             <div key={court} className="text-center">
                               <div className="text-sm font-medium text-gray-600 mb-2">
                                 Terrein {court}
