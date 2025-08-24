@@ -1122,6 +1122,11 @@ export default function Page() {
       return available.filter((p) => !taken.has(p));
     };
 
+    const playerSelectClass = (s: 'sm' | 'md') =>
+      `inline-flex items-center gap-2 rounded-full bg-white shadow-sm border border-gray-300 text-gray-900 ${
+        s === 'sm' ? 'text-xs px-2 py-0.5' : 'text-sm px-2.5 py-1'
+      }`;
+
     const renderSide = (indices: number[], size: 'sm' | 'md') => (
       <div
         className={
@@ -1136,7 +1141,7 @@ export default function Page() {
               <PlayerChip name={reservation.players[idx]} size={size} />
             ) : (
               <select
-                className="mt-1 w-full bg-white text-gray-900 border border-gray-300 rounded text-xs"
+                className={playerSelectClass(size)}
                 value={reservation?.players[idx] || ''}
                 onChange={(e) =>
                   setPlayerOnCourt(
