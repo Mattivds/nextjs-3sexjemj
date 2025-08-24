@@ -218,7 +218,7 @@ export default function Page() {
     'w-full border border-gray-300 rounded px-3 py-2 bg-white text-gray-900 placeholder-gray-400';
 
   const courtClass =
-    'relative bg-green-600 rounded-lg p-3 h-60 md:h-72 pb-10 flex flex-col justify-between border-4 border-green-700';
+    'relative bg-green-600 rounded-lg p-2 h-48 md:h-60 w-40 md:w-52 pb-8 flex flex-col justify-between border-4 border-green-700 mx-auto';
 
   // Firestore synchronisatie
   const isFirestoreUpdate = useRef(false);
@@ -432,25 +432,29 @@ export default function Page() {
     const willBeFull = isReservationFull({ ...res, players: newPlayers });
 
     setReservations((prev) => {
-      const next = prev.map((r) =>
-        r === res
-          ? {
-              ...r,
-              players: newPlayers,
-              notifiedFull: r.notifiedFull || willBeFull,
-              ...(willBeFull ? {} : { result: undefined }),
-            }
-          : r
-      );
-      return next.filter(
-        (r) =>
-          !(
-            r.date === date &&
-            r.timeSlot === timeSlot &&
-            r.court === court &&
-            r.players.every((p) => !p)
-          )
-      );
+      const next = prev
+        .map((r) =>
+          r === res
+            ? {
+                ...r,
+                players: newPlayers,
+                notifiedFull: r.notifiedFull || willBeFull,
+                ...(willBeFull ? {} : { result: undefined }),
+              }
+            : r
+        )
+        .filter(
+          (r) =>
+            !(
+              r.date === date &&
+              r.timeSlot === timeSlot &&
+              r.court === court &&
+              r.players.every((p) => !p)
+            )
+        );
+      isFirestoreUpdate.current = true;
+      syncData.setReservations(next);
+      return next;
     });
 
     if (!wasFull && willBeFull) {
@@ -1119,32 +1123,39 @@ export default function Page() {
     };
 
     const renderSide = (indices: number[], size: 'sm' | 'md') => (
-      <div className="space-y-1">
+      <div
+        className={
+          matchType === 'double'
+            ? 'flex justify-center gap-1'
+            : 'space-y-1'
+        }
+      >
         {indices.map((idx) => (
           <div key={idx} className="text-center">
-            {reservation?.players[idx] && (
+            {reservation?.players[idx] ? (
               <PlayerChip name={reservation.players[idx]} size={size} />
+            ) : (
+              <select
+                className="mt-1 w-full bg-white text-gray-900 border border-gray-300 rounded text-xs"
+                value={reservation?.players[idx] || ''}
+                onChange={(e) =>
+                  setPlayerOnCourt(
+                    date,
+                    timeSlot,
+                    court,
+                    idx,
+                    e.target.value
+                  )
+                }
+              >
+                <option value="">— selecteer —</option>
+                {optionsFor(idx).map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
             )}
-            <select
-              className="mt-1 w-full bg-white text-gray-900 border border-gray-300 rounded text-xs"
-              value={reservation?.players[idx] || ''}
-              onChange={(e) =>
-                setPlayerOnCourt(
-                  date,
-                  timeSlot,
-                  court,
-                  idx,
-                  e.target.value
-                )
-              }
-            >
-              <option value="">— selecteer —</option>
-              {optionsFor(idx).map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
           </div>
         ))}
       </div>
