@@ -19,25 +19,17 @@ import {
   updateDoc,
   where,
 } from 'firebase/firestore';
-import { db, ensureAuth } from '@/lib/firebase';
+import {
+  db,
+  ensureAuth,
+  type Reservation,
+  type MatchType,
+  type MatchCategory,
+} from '@/lib/firebase';
 
 /* =========================
    Types
 ========================= */
-type MatchCategory = 'training' | 'wedstrijd';
-
-type MatchType = 'single' | 'double';
-
-interface Reservation {
-  date: string; // yyyy-MM-dd
-  timeSlot: string; // '18u30-19u30'
-  court: number; // 1..3
-  matchType: MatchType;
-  category: MatchCategory; // training | wedstrijd
-  players: string[]; // single: [a,b], double: [x1,x2,y1,y2]
-  result?: { winner: string; loser: string } | null; // uitslag (alleen single + wedstrijd)
-}
-
 type Availability = Record<string, Record<string, Record<string, boolean>>>;
 
 interface UserSession {
@@ -1203,6 +1195,7 @@ export default function Page() {
         if (r.category !== 'wedstrijd' || r.matchType !== 'single' || !r.result)
           return;
         const { winner, loser } = r.result;
+        if (!winner || !loser) return;
         if (!s[winner] || !s[loser]) return;
         s[winner].wins++;
         s[winner].matches++;

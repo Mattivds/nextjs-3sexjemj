@@ -1,36 +1,20 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { addWeeks, format } from 'date-fns';
 import { nl } from 'date-fns/locale';
+import {
+  syncData,
+  ensureAuth,
+  type Reservation as DBReservation,
+  type MatchType,
+  type MatchCategory,
+} from '@/lib/firebase';
 
 /* =========================
    Types
 ========================= */
-type MatchCategory = 'training' | 'wedstrijd';
-
-interface Reservation {
-  date: string; // yyyy-MM-dd
-  timeSlot: string; // '18u30-19u30'
-  court: number; // 1..3
-  matchType: 'single' | 'double';
-  category: MatchCategory; // training | wedstrijd
-  // Bij single: players: [a,b]
-  // Bij double: players: [x1,x2,y1,y2]
-  // Lege plekken worden bewaard als '' zodat spelers stapsgewijs kunnen invullen
-  players: string[];
-  // Resultaat:
-  // single:  { winner: 'A', loser: 'B' }
-  // double:  { winners: ['A','B'], losers: ['C','D'] }
-  result?: {
-    winner?: string;
-    loser?: string;
-    winners?: [string, string];
-    losers?: [string, string];
-  };
-  // Markering om dubbele meldingen te vermijden zodra match voor het eerst vol is
-  notifiedFull?: boolean;
-}
+type Reservation = DBReservation & { notifiedFull?: boolean };
 
 type Availability = Record<string, Record<string, Record<string, boolean>>>;
 
@@ -89,8 +73,10 @@ const PASSWORDS: Record<string, string> = {
 };
 
 const TIME_SLOTS = [
-  { id: '18u30-19u30', label: '18u30-19u30' },
-  { id: '19u30-20u30', label: '19u30-20u30' },
+  { id: '17u30-18u30', label: '17u30-18u30', courts: [2] },
+  { id: '18u30-19u30', label: '18u30-19u30', courts: [1, 2] },
+  { id: '19u30-20u30', label: '19u30-20u30', courts: [1, 2] },
+  { id: '20u30-21u30', label: '20u30-21u30', courts: [1, 2] },
 ];
 
 /* =========================
@@ -211,9 +197,7 @@ export default function Page() {
   /* --- Core state --- */
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [availability, setAvailability] = useState<Availability>({});
-  const [matchTypes, setMatchTypes] = useState<
-    Record<string, 'single' | 'double'>
-  >({});
+  const [matchTypes, setMatchTypes] = useState<Record<string, MatchType>>({});
   const [categories, setCategories] = useState<Record<string, MatchCategory>>(
     {}
   );
@@ -229,16 +213,37 @@ export default function Page() {
 
   /* --- Helpers for UI --- */
   const selectClass =
-    'w-full p-2 border border-gray-300 rounded text-sm font-medium focus:ring-1 focus:ring-blue-500 bg-white text-gray-900 placeholder-gray-400';
+    'w-full px-2 py-1 border border-gray-300 rounded text-xs font-medium focus:ring-1 focus:ring-blue-500 bg-white text-gray-900 placeholder-gray-400';
   const inputClass =
     'w-full border border-gray-300 rounded px-3 py-2 bg-white text-gray-900 placeholder-gray-400';
 
   const courtClass =
     'relative bg-green-600 rounded-xl p-5 h-80 md:h-96 pb-14 flex flex-col justify-between border-4 border-green-700';
 
+  // Firestore synchronisatie
+  const isFirestoreUpdate = useRef(false);
+  useEffect(() => {
+    let unsub: () => void = () => {};
+    ensureAuth().then(() => {
+      unsub = syncData.onReservationsChange((data) => {
+        isFirestoreUpdate.current = true;
+        setReservations(data);
+      });
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    if (isFirestoreUpdate.current) {
+      isFirestoreUpdate.current = false;
+      return;
+    }
+    syncData.setReservations(reservations);
+  }, [reservations]);
+
   /* =========================
      Persist & load
-  ========================= */
+    ========================= */
   useEffect(() => {
     try {
       const r = localStorage.getItem(RESERV_KEY);
@@ -350,7 +355,7 @@ export default function Page() {
     date: string,
     timeSlot: string,
     court: number,
-    type: 'single' | 'double'
+    type: MatchType
   ) => {
     const key = getCourtKey(date, timeSlot, court);
     setMatchTypes((prev) => ({ ...prev, [key]: type }));
@@ -401,7 +406,7 @@ export default function Page() {
     const mt = getMatchType(date, timeSlot, court);
     const cat = getCategory(date, timeSlot, court);
     const size = mt === 'single' ? 2 : 4;
-    const fresh: Reservation = {
+    return {
       date,
       timeSlot,
       court,
@@ -409,8 +414,65 @@ export default function Page() {
       category: cat,
       players: Array.from({ length: size }, () => ''),
     };
-    setReservations((prev) => [...prev, fresh]);
-    return fresh;
+  };
+
+  const setPlayerOnCourt = (
+    date: string,
+    timeSlot: string,
+    court: number,
+    idx: number,
+    player: string
+  ) => {
+    const res = ensureReservation(date, timeSlot, court);
+    const newPlayers = [...res.players];
+    newPlayers[idx] = player;
+    const wasFull = isReservationFull(res);
+    const updated: Reservation = {
+      ...res,
+      players: newPlayers,
+    };
+    const willBeFull = isReservationFull(updated);
+    const toSave: Reservation = {
+      ...updated,
+      notifiedFull: res.notifiedFull || willBeFull,
+      ...(willBeFull ? {} : { result: undefined }),
+    };
+
+    isFirestoreUpdate.current = true;
+    setReservations((prev) => {
+      const withRes = prev.some(
+        (r) => r.date === date && r.timeSlot === timeSlot && r.court === court
+      )
+        ? prev
+        : [...prev, res];
+
+      return withRes
+        .map((r) =>
+          r.date === date && r.timeSlot === timeSlot && r.court === court
+            ? toSave
+            : r
+        )
+        .filter(
+          (r) =>
+            !(
+              r.date === date &&
+              r.timeSlot === timeSlot &&
+              r.court === court &&
+              r.players.every((p) => !p)
+            )
+        );
+    });
+
+    if (toSave.players.every((p) => !p)) {
+      syncData.deleteReservation(date, timeSlot, court);
+    } else {
+      const { notifiedFull, ...dbRes } = toSave;
+      syncData.setReservation(dbRes);
+    }
+
+    if (!wasFull && willBeFull) {
+      sendMatchFullMessages({ ...toSave, notifiedFull: true });
+    }
   };
 
   /* =========================
@@ -493,20 +555,21 @@ export default function Page() {
     if (!isAdmin) return;
     const { opponentCount } = buildCounts();
     const result: Reservation[] = [];
-    const mt: Record<string, 'single' | 'double'> = {};
+    const mt: Record<string, MatchType> = {};
     const cat: Record<string, MatchCategory> = {};
 
     const hours = sundays.flatMap((d) =>
       TIME_SLOTS.map((slot) => ({
         dateStr: format(d, 'yyyy-MM-dd'),
         slotId: slot.id,
+        courts: slot.courts,
       }))
     );
 
     const oppSeen = (a: string, b: string) => opponentCount[pairKey(a, b)] || 0;
 
     hours.forEach((hr, hourIdx) => {
-      const groups = hourIdx % 2 === 0 ? [4, 4, 2] : [4, 2, 2];
+      const pattern = hourIdx % 2 === 0 ? [4, 4, 2] : [4, 2, 2];
       const used = new Set<string>();
       const available = new Set(playersAvailableFor(hr.dateStr, hr.slotId));
 
@@ -576,8 +639,9 @@ export default function Page() {
         return best;
       };
 
-      groups.forEach((size, idxInHour) => {
-        const court = idxInHour + 1;
+      hr.courts.forEach((court) => {
+        const size = pattern[court - 1];
+        if (!size) return;
         if (size === 2) {
           const pair = pickSingles();
           if (!pair) return;
@@ -635,14 +699,15 @@ export default function Page() {
     const hours = TIME_SLOTS.map((slot) => ({
       dateStr,
       slotId: slot.id,
+      courts: slot.courts,
     }));
     const result: Reservation[] = [];
-    const mt: Record<string, 'single' | 'double'> = {};
+    const mt: Record<string, MatchType> = {};
     const cat: Record<string, MatchCategory> = {};
     const oppSeen = (a: string, b: string) => opponentCount[pairKey(a, b)] || 0;
 
     hours.forEach((hr, hourIdx) => {
-      const groups = hourIdx % 2 === 0 ? [4, 4, 2] : [4, 2, 2];
+      const pattern = hourIdx % 2 === 0 ? [4, 4, 2] : [4, 2, 2];
       const used = new Set<string>();
       const available = new Set(playersAvailableFor(hr.dateStr, hr.slotId));
 
@@ -712,8 +777,9 @@ export default function Page() {
         return best;
       };
 
-      groups.forEach((size, idxInHour) => {
-        const court = idxInHour + 1;
+      hr.courts.forEach((court) => {
+        const size = pattern[court - 1];
+        if (!size) return;
         if (size === 2) {
           const pair = pickSingles();
           if (!pair) return;
@@ -1059,147 +1125,79 @@ export default function Page() {
     const reservation = findReservation(date, timeSlot, court);
     const matchType = getMatchType(date, timeSlot, court);
     const category = getCategory(date, timeSlot, court);
+    const available = playersAvailableFor(date, timeSlot);
+    const playersInSlot = getPlayersInSlot(date, timeSlot);
 
-    // Kaart met bestaande reservatie
-    if (reservation) {
-      const mayEdit = canModifyReservation(reservation);
-      const winnerSingle = reservation.result?.winner;
-      const winnerDoubles = reservation.result?.winners;
-      const isWin = (p: string) =>
-        Array.isArray(winnerDoubles) && winnerDoubles.includes(p);
-      const iAmIn = !!myName && reservation.players.includes(myName);
-      const availableSet = new Set(playersAvailableFor(date, timeSlot));
-      const canJoin =
-        !!myName &&
-        !iAmIn &&
-        availableSet.has(myName) &&
-        !getPlayersInSlot(date, timeSlot).has(myName) &&
-        reservation.players.some((p) => !p); // er is nog plek
+    const optionsFor = (idx: number) => {
+      const cur = reservation?.players[idx];
+      const taken = new Set(playersInSlot);
+      if (cur) taken.delete(cur);
+      return available.filter((p) => !taken.has(p));
+    };
 
-      return (
-        <div className={courtClass}>
-          <ReservationBadge r={reservation} />
+    const playerSelectClass = (s: 'sm' | 'md') =>
+      `inline-flex items-center gap-2 rounded-full bg-white shadow-sm border border-gray-300 text-gray-900 ${
+        s === 'sm' ? 'text-xs px-2 py-0.5' : 'text-sm px-2.5 py-1'
+      }`;
 
-          {reservation.matchType === 'single' ? (
-            <>
-              <div className="bg-blue-600 text-white text-center py-3 rounded border-2 border-white text-base font-semibold">
-                <div className="flex items-center justify-center">
-                  <PlayerChip
-                    name={reservation.players[0] || '—'}
-                    size="md"
-                    highlight={
-                      !!reservation.players[0] &&
-                      winnerSingle === reservation.players[0]
-                    }
-                  />
-                </div>
-              </div>
-              <TennisNet />
-              <div className="bg-blue-600 text-white text-center py-3 rounded border-2 border-white text-base font-semibold">
-                <div className="flex items-center justify-center">
-                  <PlayerChip
-                    name={reservation.players[1] || '—'}
-                    size="md"
-                    highlight={
-                      !!reservation.players[1] &&
-                      winnerSingle === reservation.players[1]
-                    }
-                  />
-                </div>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="space-y-1">
-                <div className="bg-blue-600 text-white text-center py-2 rounded border-2 border-white text-sm font-semibold">
-                  <div className="flex items-center justify-center">
-                    <PlayerChip
-                      name={reservation.players[0] || '—'}
-                      size="sm"
-                      highlight={isWin(reservation.players[0])}
-                    />
-                  </div>
-                </div>
-                <div className="bg-blue-600 text-white text-center py-2 rounded border-2 border-white text-sm font-semibold">
-                  <div className="flex items-center justify-center">
-                    <PlayerChip
-                      name={reservation.players[1] || '—'}
-                      size="sm"
-                      highlight={isWin(reservation.players[1])}
-                    />
-                  </div>
-                </div>
-              </div>
-              <TennisNet />
-              <div className="space-y-1">
-                <div className="bg-blue-600 text-white text-center py-2 rounded border-2 border-white text-sm font-semibold">
-                  <div className="flex items-center justify-center">
-                    <PlayerChip
-                      name={reservation.players[2] || '—'}
-                      size="sm"
-                      highlight={isWin(reservation.players[2])}
-                    />
-                  </div>
-                </div>
-                <div className="bg-blue-600 text-white text-center py-2 rounded border-2 border-white text-sm font-semibold">
-                  <div className="flex items-center justify-center">
-                    <PlayerChip
-                      name={reservation.players[3] || '—'}
-                      size="sm"
-                      highlight={isWin(reservation.players[3])}
-                    />
-                  </div>
-                </div>
-              </div>
-            </>
-          )}
-
-          {/* Actieknoppen */}
-          <div className="absolute top-1 right-1 flex gap-1">
-            {iAmIn && (
-              <button
-                onClick={() => leaveCourt(reservation, myName!)}
-                className="bg-white text-gray-800 rounded-full px-2 py-1 text-[10px] border border-gray-200"
-                title="Ik kan toch niet"
+    const renderSide = (indices: number[], size: 'sm' | 'md') => (
+      <div
+        className={
+          matchType === 'double'
+            ? 'flex justify-center gap-1'
+            : 'space-y-1'
+        }
+      >
+        {indices.map((idx) => (
+          <div key={idx} className="text-center">
+            {reservation?.players[idx] ? (
+              <PlayerChip name={reservation.players[idx]} size={size} />
+            ) : (
+              <select
+                className={playerSelectClass(size)}
+                value={reservation?.players[idx] || ''}
+                onChange={(e) =>
+                  setPlayerOnCourt(
+                    date,
+                    timeSlot,
+                    court,
+                    idx,
+                    e.target.value
+                  )
+                }
               >
-                Ik kan toch niet
-              </button>
-            )}
-            {canJoin && (
-              <button
-                onClick={() => joinCourt(date, timeSlot, court)}
-                className="bg-white text-gray-800 rounded-full px-2 py-1 text-[10px] border border-gray-200"
-                title="Ik speel mee"
-              >
-                Ik speel mee
-              </button>
-            )}
-            {mayEdit && (
-              <button
-                onClick={() => removeReservation(date, timeSlot, court)}
-                className="bg-red-500 text-white rounded-full w-6 h-6 text-xs hover:bg-red-600"
-                title="Verwijder reservatie"
-              >
-                ×
-              </button>
+                <option value="">— selecteer —</option>
+                {optionsFor(idx).map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
             )}
           </div>
+        ))}
+      </div>
+    );
 
-          <WinnerButtons r={reservation} />
-        </div>
-      );
-    }
-
-    // Kaart zonder reservatie: controls bovenaan
-    const availableSet = new Set(playersAvailableFor(date, timeSlot));
-    const canFirstJoin =
-      !!myName &&
-      availableSet.has(myName) &&
-      !getPlayersInSlot(date, timeSlot).has(myName);
+    const topIdx = matchType === 'single' ? [0] : [0, 1];
+    const bottomIdx = matchType === 'single' ? [1] : [2, 3];
+    const size = matchType === 'single' ? 'md' : 'sm';
 
     return (
       <div className={courtClass}>
-        <div className="flex justify-center gap-2 mb-2">
+        {reservation && <ReservationBadge r={reservation} />}
+        {reservation && canModifyReservation(reservation) && (
+          <div className="absolute top-1 right-1">
+            <button
+              onClick={() => removeReservation(date, timeSlot, court)}
+              className="bg-red-500 text-white rounded-full w-6 h-6 text-xs hover:bg-red-600"
+              title="Verwijder reservatie"
+            >
+              ×
+            </button>
+          </div>
+        )}
+        <div className="flex justify-center gap-2 mb-1">
           <button
             onClick={() => setMatchTypeFor(date, timeSlot, court, 'single')}
             className={`px-3 py-1 rounded text-sm font-bold ${
@@ -1221,7 +1219,6 @@ export default function Page() {
             👥👥
           </button>
           <select
-            // *** Zichtbaar op mobiel: altijd donkere tekst op witte achtergrond
             className="px-2 py-1 rounded text-sm bg-white text-gray-900 border border-gray-300"
             value={getCategory(date, timeSlot, court)}
             onChange={(e) =>
@@ -1239,24 +1236,11 @@ export default function Page() {
           </select>
         </div>
 
-        <div className="flex-1 grid place-items-center text-white/90 text-sm">
-          Nog geen spelers
-        </div>
+        {renderSide(topIdx, size)}
+        <TennisNet />
+        {renderSide(bottomIdx, size)}
 
-        <div className="pt-2">
-          <button
-            onClick={() => joinCourt(date, timeSlot, court)}
-            disabled={!canFirstJoin}
-            className="w-full bg-white text-gray-800 py-2 px-3 rounded text-sm border border-gray-200 disabled:opacity-50"
-            title={
-              canFirstJoin
-                ? 'Plaats jezelf op dit terrein'
-                : 'Niet beschikbaar of al ingepland'
-            }
-          >
-            Ik speel mee
-          </button>
-        </div>
+        {reservation && <WinnerButtons r={reservation} />}
       </div>
     );
   };
@@ -1904,8 +1888,12 @@ export default function Page() {
                         <h3 className="text-xl font-semibold text-gray-700 mb-4">
                           {slot.label}
                         </h3>
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                          {[1, 2, 3].map((court) => (
+                        <div
+                          className={`grid grid-cols-1 ${
+                            slot.courts.length > 1 ? 'md:grid-cols-2' : ''
+                          } gap-6`}
+                        >
+                          {slot.courts.map((court) => (
                             <div key={court} className="text-center">
                               <div className="text-sm font-medium text-gray-600 mb-2">
                                 Terrein {court}

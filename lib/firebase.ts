@@ -12,8 +12,10 @@ import {
   doc,
   onSnapshot,
   setDoc,
+  deleteDoc,
   writeBatch,
   serverTimestamp,
+  getDocs,
   type DocumentData,
 } from 'firebase/firestore';
 
@@ -57,8 +59,17 @@ export async function ensureAuth(): Promise<User> {
    - Biedt ook listeners voor reservations & availability
    ============================================================ */
 
-type MatchType = 'single' | 'double';
-type MatchCategory = 'training' | 'wedstrijd';
+export type MatchType = 'single' | 'double';
+export type MatchCategory = 'training' | 'wedstrijd';
+
+export type MatchResult =
+  | {
+      winner?: string;
+      loser?: string;
+      winners?: [string, string];
+      losers?: [string, string];
+    }
+  | null;
 
 export interface Reservation {
   date: string; // yyyy-MM-dd
@@ -67,7 +78,7 @@ export interface Reservation {
   matchType: MatchType;
   category: MatchCategory;
   players: string[]; // single: [a,b], double: [x1,x2,y1,y2]
-  result?: { winner: string; loser: string } | null;
+  result?: MatchResult;
 }
 
 type Availability = Record<string, Record<string, Record<string, boolean>>>;
@@ -93,18 +104,36 @@ export const syncData = {
           matchType: (r.matchType ?? r.match_type) as MatchType,
           category: r.category as MatchCategory,
           players: r.players ?? [],
-          result: r.result ?? null,
+          result: (r.result ?? null) as MatchResult,
         });
       });
       cb(list);
     });
   },
 
+  async setReservation(reservation: Reservation) {
+    await ensureAuth();
+    const id = `${reservation.date}_${reservation.timeSlot}_${reservation.court}`;
+    await setDoc(
+      doc(db, 'reservations', id),
+      { ...reservation, updatedAt: serverTimestamp() },
+      { merge: true }
+    );
+  },
+
+  async deleteReservation(date: string, timeSlot: string, court: number) {
+    await ensureAuth();
+    await deleteDoc(doc(db, 'reservations', `${date}_${timeSlot}_${court}`));
+  },
+
   async setReservations(reservations: Reservation[]) {
     await ensureAuth();
+    const existingSnap = await getDocs(collReservations);
+    const remaining = new Set(existingSnap.docs.map((d) => d.id));
     const batch = writeBatch(db);
     reservations.forEach((r) => {
       const id = `${r.date}_${r.timeSlot}_${r.court}`;
+      remaining.delete(id);
       batch.set(
         doc(db, 'reservations', id),
         {
@@ -113,6 +142,9 @@ export const syncData = {
         },
         { merge: true }
       );
+    });
+    remaining.forEach((id) => {
+      batch.delete(doc(db, 'reservations', id));
     });
     await batch.commit();
   },
