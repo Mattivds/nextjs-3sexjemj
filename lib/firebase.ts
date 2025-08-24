@@ -14,6 +14,7 @@ import {
   setDoc,
   writeBatch,
   serverTimestamp,
+  getDocs,
   type DocumentData,
 } from 'firebase/firestore';
 
@@ -111,9 +112,12 @@ export const syncData = {
 
   async setReservations(reservations: Reservation[]) {
     await ensureAuth();
+    const existingSnap = await getDocs(collReservations);
+    const remaining = new Set(existingSnap.docs.map((d) => d.id));
     const batch = writeBatch(db);
     reservations.forEach((r) => {
       const id = `${r.date}_${r.timeSlot}_${r.court}`;
+      remaining.delete(id);
       batch.set(
         doc(db, 'reservations', id),
         {
@@ -122,6 +126,9 @@ export const syncData = {
         },
         { merge: true }
       );
+    });
+    remaining.forEach((id) => {
+      batch.delete(doc(db, 'reservations', id));
     });
     await batch.commit();
   },
