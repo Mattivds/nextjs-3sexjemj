@@ -213,12 +213,12 @@ export default function Page() {
 
   /* --- Helpers for UI --- */
   const selectClass =
-    'w-full p-2 border border-gray-300 rounded text-sm font-medium focus:ring-1 focus:ring-blue-500 bg-white text-gray-900 placeholder-gray-400';
+    'w-full px-2 py-1 border border-gray-300 rounded text-xs font-medium focus:ring-1 focus:ring-blue-500 bg-white text-gray-900 placeholder-gray-400';
   const inputClass =
     'w-full border border-gray-300 rounded px-3 py-2 bg-white text-gray-900 placeholder-gray-400';
 
   const courtClass =
-    'relative bg-green-600 rounded-lg p-2 h-48 md:h-60 w-40 md:w-52 pb-8 flex flex-col justify-between border-4 border-green-700 mx-auto';
+    'relative bg-green-600 rounded-xl p-5 h-80 md:h-96 pb-14 flex flex-col justify-between border-4 border-green-700';
 
   // Firestore synchronisatie
   const isFirestoreUpdate = useRef(false);
