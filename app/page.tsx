@@ -3,35 +3,18 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
 import { addWeeks, format } from 'date-fns';
 import { nl } from 'date-fns/locale';
-import { syncData, ensureAuth } from '@/lib/firebase';
+import {
+  syncData,
+  ensureAuth,
+  type Reservation as DBReservation,
+  type MatchType,
+  type MatchCategory,
+} from '@/lib/firebase';
 
 /* =========================
    Types
 ========================= */
-type MatchCategory = 'training' | 'wedstrijd';
-
-interface Reservation {
-  date: string; // yyyy-MM-dd
-  timeSlot: string; // '18u30-19u30'
-  court: number; // 1..3
-  matchType: 'single' | 'double';
-  category: MatchCategory; // training | wedstrijd
-  // Bij single: players: [a,b]
-  // Bij double: players: [x1,x2,y1,y2]
-  // Lege plekken worden bewaard als '' zodat spelers stapsgewijs kunnen invullen
-  players: string[];
-  // Resultaat:
-  // single:  { winner: 'A', loser: 'B' }
-  // double:  { winners: ['A','B'], losers: ['C','D'] }
-  result?: {
-    winner?: string;
-    loser?: string;
-    winners?: [string, string];
-    losers?: [string, string];
-  };
-  // Markering om dubbele meldingen te vermijden zodra match voor het eerst vol is
-  notifiedFull?: boolean;
-}
+type Reservation = DBReservation & { notifiedFull?: boolean };
 
 type Availability = Record<string, Record<string, Record<string, boolean>>>;
 
@@ -212,9 +195,7 @@ export default function Page() {
   /* --- Core state --- */
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [availability, setAvailability] = useState<Availability>({});
-  const [matchTypes, setMatchTypes] = useState<
-    Record<string, 'single' | 'double'>
-  >({});
+  const [matchTypes, setMatchTypes] = useState<Record<string, MatchType>>({});
   const [categories, setCategories] = useState<Record<string, MatchCategory>>(
     {}
   );
@@ -372,7 +353,7 @@ export default function Page() {
     date: string,
     timeSlot: string,
     court: number,
-    type: 'single' | 'double'
+    type: MatchType
   ) => {
     const key = getCourtKey(date, timeSlot, court);
     setMatchTypes((prev) => ({ ...prev, [key]: type }));
@@ -515,7 +496,7 @@ export default function Page() {
     if (!isAdmin) return;
     const { opponentCount } = buildCounts();
     const result: Reservation[] = [];
-    const mt: Record<string, 'single' | 'double'> = {};
+    const mt: Record<string, MatchType> = {};
     const cat: Record<string, MatchCategory> = {};
 
     const hours = sundays.flatMap((d) =>
@@ -659,7 +640,7 @@ export default function Page() {
       slotId: slot.id,
     }));
     const result: Reservation[] = [];
-    const mt: Record<string, 'single' | 'double'> = {};
+    const mt: Record<string, MatchType> = {};
     const cat: Record<string, MatchCategory> = {};
     const oppSeen = (a: string, b: string) => opponentCount[pairKey(a, b)] || 0;
 

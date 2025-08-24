@@ -57,8 +57,17 @@ export async function ensureAuth(): Promise<User> {
    - Biedt ook listeners voor reservations & availability
    ============================================================ */
 
-type MatchType = 'single' | 'double';
-type MatchCategory = 'training' | 'wedstrijd';
+export type MatchType = 'single' | 'double';
+export type MatchCategory = 'training' | 'wedstrijd';
+
+export type MatchResult =
+  | {
+      winner?: string;
+      loser?: string;
+      winners?: [string, string];
+      losers?: [string, string];
+    }
+  | null;
 
 export interface Reservation {
   date: string; // yyyy-MM-dd
@@ -67,7 +76,7 @@ export interface Reservation {
   matchType: MatchType;
   category: MatchCategory;
   players: string[]; // single: [a,b], double: [x1,x2,y1,y2]
-  result?: { winner: string; loser: string } | null;
+  result?: MatchResult;
 }
 
 type Availability = Record<string, Record<string, Record<string, boolean>>>;
@@ -93,7 +102,7 @@ export const syncData = {
           matchType: (r.matchType ?? r.match_type) as MatchType,
           category: r.category as MatchCategory,
           players: r.players ?? [],
-          result: r.result ?? null,
+          result: (r.result ?? null) as MatchResult,
         });
       });
       cb(list);
